@@ -1,6 +1,6 @@
 # openwrt-netbird
 
-[![GitHub Actions](https://github.com/jafox1024/openwrt-netbird/workflows/CI/badge.svg)](https://github.com/jafox1024/openwrt-netbird/actions?query=workflow%3ACI)
+[![GitHub Actions](https://github.com/jafox1024/openwrt-netbird/workflows/build/badge.svg)](https://github.com/jafox1024/openwrt-netbird/actions?query=workflow%3Abuild)
 
 OpenWrt package for [netbird](https://github.com/netbirdio/netbird)
 
