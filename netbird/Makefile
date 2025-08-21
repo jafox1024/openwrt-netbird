@@ -41,7 +41,7 @@ define Package/netbird/description
 endef
 
 define Package/netbird/conffiles
-/etc/netbird/config.json
+/root/.config/netbird/
 endef
 
 # Workaround for musl 1.2.4 compability in mattn/go-sqlite3
