@@ -57,9 +57,9 @@ jobs:
       matrix:
         target:
           - arch: "x86_64"
-            sdk: "https://downloads.openwrt.org/releases/24.10.7/targets/x86/64/openwrt-sdk-24.10.7-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+            sdk: "https://downloads.openwrt.org/releases/24.10.8/targets/x86/64/openwrt-sdk-24.10.8-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
           - arch: "rockchip_armv8"
-            sdk: "https://downloads.openwrt.org/releases/24.10.7/targets/rockchip/armv8/openwrt-sdk-24.10.7-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+            sdk: "https://downloads.openwrt.org/releases/24.10.8/targets/rockchip/armv8/openwrt-sdk-24.10.8-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
          
     steps:
       - name: Checkout
