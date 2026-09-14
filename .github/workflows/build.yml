@@ -1,18 +1,21 @@
 name: build
 
-# OpenWrt 25.12 分支构建流水线
+# OpenWrt 25.12 主线构建流水线（本文件位于仓库默认分支 main）
 #
-# 与 main(24.10) 的关键差异：
+# 分支布局：
+#   * main（本文件）  ：OpenWrt 25.12.x + apk 包管理器，产物 .apk，跟随上游自动更新
+#   * openwrt-24.10   ：24.10.x 备份线 + opkg，产物 .ipk，内容冻结、不再跟随上游自动更新
+#
+# 与 24.10 线的关键差异：
 #   * OpenWrt 25.12 起包管理器由 opkg 换成 apk，产物是 .apk 而不是 .ipk
-#   * 产物文件名不带架构，所以打包时统一追加 -<arch> 后缀，避免多架构发布时同名冲突
-#   * Release tag 追加 -openwrt25.12 后缀，与 main 分支的 24.10 版本互不干扰
+#   * apk 产物文件名不带架构，所以打包时统一追加 -<arch> 后缀，避免多架构发布时同名冲突
+#   * Release tag 追加 -openwrt25.12 后缀，与 24.10 线的版本互不干扰
 
 on:
-  # 手动触发：Actions -> build -> Run workflow -> 选择 openwrt-25.12 分支
+  # 手动触发：Actions -> build -> Run workflow -> 选择 main 分支
   workflow_dispatch:
-  # 每日检查上游 netbird 新版本。
-  # 注意：GitHub 只会在“默认分支”上运行 schedule，本分支的 cron 不会自动生效。
-  # 需要每日自动更新时，请在默认分支上加一个调度入口来 dispatch 本分支（见 README）。
+  # 每日 00:00 UTC 检查上游 netbird 是否有新版本，有更新才构建并发布。
+  # main 是默认分支，GitHub 只在默认分支上运行 schedule，所以这个 cron 会正常触发。
   schedule:
     - cron: '0 0 * * *'
 
@@ -24,7 +27,8 @@ env:
   OPENWRT_SERIES: "25.12"
   NETBIRD_REPO: "netbirdio/netbird"
   GOLANG_FEED_BRANCH: "26.x"
-  BUILD_BRANCH: "openwrt-25.12"
+  # 流水线固定为自己所在的主线分支，避免从别的分支误触发时把提交推到错误的地方
+  BUILD_BRANCH: "main"
 
 jobs:
   check:
