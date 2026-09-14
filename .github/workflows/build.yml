@@ -1,52 +1,86 @@
 name: build
 
+# OpenWrt 25.12 分支构建流水线
+#
+# 与 main(24.10) 的关键差异：
+#   * OpenWrt 25.12 起包管理器由 opkg 换成 apk，产物是 .apk 而不是 .ipk
+#   * 产物文件名不带架构，所以打包时统一追加 -<arch> 后缀，避免多架构发布时同名冲突
+#   * Release tag 追加 -openwrt25.12 后缀，与 main 分支的 24.10 版本互不干扰
+
 on:
+  # 手动触发：Actions -> build -> Run workflow -> 选择 openwrt-25.12 分支
   workflow_dispatch:
+  # 每日检查上游 netbird 新版本。
+  # 注意：GitHub 只会在“默认分支”上运行 schedule，本分支的 cron 不会自动生效。
+  # 需要每日自动更新时，请在默认分支上加一个调度入口来 dispatch 本分支（见 README）。
   schedule:
     - cron: '0 0 * * *'
+
+permissions:
+  contents: write
+
+env:
+  OPENWRT_RELEASE: "25.12.5"
+  OPENWRT_SERIES: "25.12"
+  NETBIRD_REPO: "netbirdio/netbird"
+  GOLANG_FEED_BRANCH: "26.x"
+  BUILD_BRANCH: "openwrt-25.12"
 
 jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
-      update: ${{ env.update }}
+      update: ${{ steps.check.outputs.update }}
     steps:
       - name: Checkout
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_BRANCH }}
+          fetch-depth: 0
 
       - name: Init Env
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           sudo timedatectl set-timezone "Asia/Shanghai"
-  
-      - name: Check
+
+      - name: Check upstream release and commit if newer
+        id: check
         run: |
-          REPO="netbirdio/netbird"
-          latesttag=$(curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -sL https://api.github.com/repos/${REPO}/releases/latest | jq -r .tag_name)
-          localetag=$(grep "^PKG_VERSION" netbird/Makefile | sed "s/.*=\(.*\)/\1/")
-          if [ "${latesttag/v/}" != "${localetag}" ]; then
-            PKG_VERSION=${latesttag/v/}
-            PKG_HASH="$(curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -sL https://codeload.github.com/${REPO}/tar.gz/v${PKG_VERSION} | sha256sum | cut -d ' ' -f 1)"
-            sed -i "s/^PKG_VERSION.*/PKG_VERSION:=${PKG_VERSION}/" netbird/Makefile
-            sed -i "s/^PKG_HASH.*/PKG_HASH:=${PKG_HASH}/" netbird/Makefile
-            echo "package_version=$PKG_VERSION" >>$GITHUB_ENV
+          set -eu
+          latest=$(curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${NETBIRD_REPO}/releases/latest" | jq -r '.tag_name // empty')
+          if [ -z "$latest" ]; then
+            echo "::error::无法获取 ${NETBIRD_REPO} 的最新 release"
+            exit 1
           fi
-          
-      - name: Set update
-        id: set-update
-        run: |
-          git pull
-          status=$(git status -s | grep -E 'netbird/Makefile' | awk '{printf " %s", $2}')
-          if [ -n "${status}" ]; then
-            git add netbird/Makefile
-            git commit -m "update to $package_version $(date +%Y-%m-%d" "%H:%M:%S)"
-            git push -f
-            echo "update=true" >>$GITHUB_ENV
-          else
-            echo "update=false" >>$GITHUB_ENV
+          latest="${latest#v}"
+          current=$(grep '^PKG_VERSION' netbird/Makefile | cut -d= -f2)
+
+          echo "upstream=${latest} local=${current} branch=${BUILD_BRANCH}"
+          if [ "$latest" = "$current" ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-  
+
+          hash=$(curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://codeload.github.com/${NETBIRD_REPO}/tar.gz/v${latest}" | sha256sum | cut -d' ' -f1)
+          if [ -z "$hash" ]; then
+            echo "::error::无法计算 netbird v${latest} 的 sha256"
+            exit 1
+          fi
+
+          sed -i "s/^PKG_VERSION.*/PKG_VERSION:=${latest}/" netbird/Makefile
+          sed -i "s/^PKG_HASH.*/PKG_HASH:=${hash}/" netbird/Makefile
+
+          git add netbird/Makefile
+          git commit -m "update to ${latest} $(date '+%Y-%m-%d %H:%M:%S')"
+          git pull --rebase origin "${BUILD_BRANCH}"
+          git push origin "HEAD:${BUILD_BRANCH}"
+
+          echo "package_version=${latest}" >> "$GITHUB_OUTPUT"
+          echo "update=true" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build - ${{ matrix.target.arch }}
     needs: check
@@ -57,59 +91,69 @@ jobs:
       matrix:
         target:
           - arch: "x86_64"
-            sdk: "https://downloads.openwrt.org/releases/24.10.8/targets/x86/64/openwrt-sdk-24.10.8-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+            sdk: "https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-sdk-25.12.5-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
           - arch: "rockchip_armv8"
-            sdk: "https://downloads.openwrt.org/releases/24.10.8/targets/rockchip/armv8/openwrt-sdk-24.10.8-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
-         
+            sdk: "https://downloads.openwrt.org/releases/25.12.5/targets/rockchip/armv8/openwrt-sdk-25.12.5-rockchip-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
+
     steps:
       - name: Checkout
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_BRANCH }}
 
       - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          sudo apt-get update
+          sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar file flex gawk gettext gcc-multilib g++-multilib \
           git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
           libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz \
           mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools \
           libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip \
-          vim wget xmlto xxd zlib1g-dev python3-setuptools npm
-          sudo apt install --reinstall libc6
-          sudo systemctl daemon-reload
-          sudo apt -y autoremove --purge
-          sudo apt clean
+          vim wget xmlto xxd zlib1g-dev zstd python3-setuptools npm
 
       - name: Install OpenWrt SDK
         run: |
-          wget ${{ matrix.target.sdk }} -O openwrt-sdk.tar.zst
-          tar -xf openwrt-sdk.tar.zst
-          mv -f openwrt-sdk-* openwrt-sdk
+          wget -q "${{ matrix.target.sdk }}" -O openwrt-sdk.tar.zst
+          mkdir -p openwrt-sdk
+          tar -xf openwrt-sdk.tar.zst -C openwrt-sdk --strip-components=1
 
       - name: Build Package
         run: |
-          git pull
           cd openwrt-sdk
           cp -rf ../netbird ./package/
           sed -i "1i\\src-link netbird $(pwd)/package" feeds.conf.default
 
           ./scripts/feeds update -a
-          if [ -d ./feeds/packages/lang/golang ]; then
-            rm -rf ./feeds/packages/lang/golang
-            git clone --depth=1 -b 26.x https://github.com/sbwml/packages_lang_golang ./feeds/packages/lang/golang
-          fi
+          # netbird 0.78.1 的 go.mod 要求 go >= 1.26，官方 feed 的 Go 偏低，
+          # 用 sbwml 维护的 Go 1.26 feed 替换（分支名 = Go 版本）
+          rm -rf ./feeds/packages/lang/golang
+          git clone --depth=1 -b "${GOLANG_FEED_BRANCH}" https://github.com/sbwml/packages_lang_golang ./feeds/packages/lang/golang
           ./scripts/feeds install -a
 
           make defconfig
-          make package/netbird/compile V=s CONFIG_NETBIRD_COMPRESS_UPX=y
-          mkdir -p packed && find bin/ -type f -name '*netbird*' -exec mv -t packed {} +
-          echo "VERSION=v$(grep "^PKG_VERSION" package/netbird/Makefile | sed "s/.*=\(.*\)/\1/")" >>$GITHUB_ENV
+          make package/netbird/compile V=s
+
+      - name: Collect packages
+        run: |
+          cd openwrt-sdk
+          mkdir -p packed
+          # OpenWrt 25.12 产物为 .apk，且文件名不含架构，这里补上 -<arch> 以免多架构同名冲突
+          find bin/ -type f -name 'netbird-*.apk'
+          for f in $(find bin/ -type f -name 'netbird-*.apk'); do
+            cp "$f" "packed/$(basename "$f" .apk)-${{ matrix.target.arch }}.apk"
+          done
+          ls -l packed
+          test -n "$(ls -A packed)"
+
+          pkgver=$(grep '^PKG_VERSION' package/netbird/Makefile | cut -d= -f2)
+          echo "VERSION=v${pkgver}-openwrt${OPENWRT_SERIES}" >> "$GITHUB_ENV"
 
       - name: Upload to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: netbird-${{ matrix.target.arch }}
-          path: openwrt-sdk/packed/*.ipk
+          name: netbird-openwrt${{ env.OPENWRT_SERIES }}-${{ matrix.target.arch }}
+          path: openwrt-sdk/packed/*.apk
           if-no-files-found: error
 
       - name: Upload firmware to release
@@ -119,5 +163,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ env.VERSION }}
-          files: |
-            openwrt-sdk/packed/*.ipk
+          files: openwrt-sdk/packed/*.apk
+          fail_on_unmatched_files: true
